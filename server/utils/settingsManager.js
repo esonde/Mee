@@ -1,12 +1,13 @@
 // server/utils/settingsManager.js
-const fs = require('fs');
-const path = require('path');
-const { DEFAULT_GLOBAL_PROMPT } = require('../config/constants');
-const { defaultRoles } = require('../config/roles');
+import fs from 'fs';
+import path from 'path';
+import { DEFAULT_GLOBAL_PROMPT } from '../config/constants.js';
+import { defaultRoles } from '../config/roles.js';
 
 class SettingsManager {
   constructor() {
-    this.userDir = path.join(__dirname, '../../users');
+    // Definisce la cartella degli utenti come "users" nella root del progetto
+    this.userDir = path.join(process.cwd(), 'users');
   }
 
   getSettingsFilePath(userId) {
@@ -41,4 +42,4 @@ class SettingsManager {
   }
 }
 
-module.exports = new SettingsManager();
+export default new SettingsManager();

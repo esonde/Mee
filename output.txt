@@ -1,0 +1,1615 @@
+// server/config/constants.js
+export const APP_TITLE = "Questionario AI";
+export const APP_DESCRIPTION = "Un'applicazione per generare questionari basati sulla discussione tra esperti AI.";
+export const FOOTER_TEXT = "AI Questionnaire v1.0 - Sviluppato con Node.js e OpenAI";
+export const DEFAULT_GLOBAL_PROMPT = `CONTESTO GENERALE:
+Stiamo sviluppando un sistema intelligente per la creazione di questionari personalizzati, con l'obiettivo di ridurre il tempo tra l'invio e la compilazione.`;
+// server/config/roles.js
+export const defaultRoles = [
+    { name: "Psichiatra", description: "Esperto in analisi del funzionamento mentale ed emotivo." },
+    { name: "Psicologo", description: "Esperto in comportamento umano e processi cognitivi." },
+    { name: "Educatore", description: "Esperto in strategie di apprendimento e pedagogia." },
+    { name: "Coach", description: "Esperto in miglioramento delle performance e sviluppo personale." },
+    { name: "Biografo", description: "Esperto nell'analisi delle esperienze di vita." },
+    { name: "Moderatore", description: "Coordina la discussione e formula il questionario finale." }
+  ];
+  // server/utils/settingsManager.js
+import fs from 'fs';
+import path from 'path';
+import { DEFAULT_GLOBAL_PROMPT } from '../config/constants.js';
+import { defaultRoles } from '../config/roles.js';
+
+class SettingsManager {
+  constructor() {
+    // Definisce la cartella degli utenti come "users" nella root del progetto
+    this.userDir = path.join(process.cwd(), 'users');
+  }
+
+  getSettingsFilePath(userId) {
+    return path.join(this.userDir, userId, 'settings.json');
+  }
+
+  getSettings(userId) {
+    const filePath = this.getSettingsFilePath(userId);
+    if (fs.existsSync(filePath)) {
+      try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      } catch (err) {
+        console.error("Errore nella lettura delle impostazioni:", err);
+      }
+    }
+    // Se il file non esiste, crea le impostazioni di default
+    const defaultSettings = {
+      globalPrompt: DEFAULT_GLOBAL_PROMPT,
+      experts: defaultRoles.map(role => ({
+        name: role.name,
+        description: role.description
+      }))
+    };
+    this.updateSettings(userId, defaultSettings);
+    return defaultSettings;
+  }
+
+  updateSettings(userId, settings) {
+    const filePath = this.getSettingsFilePath(userId);
+    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf8');
+    return true;
+  }
+}
+
+export default new SettingsManager();
+// server/utils/openaiHelper.js
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+/**
+ * Esegue una richiesta di completamento in streaming.
+ * @param {string} role - Il ruolo dell'esperto (es. "Psicologo").
+ * @param {string} prompt - Il prompt utente da inviare.
+ * @param {function} onData - Callback per ogni frammento di testo ricevuto.
+ * @param {function} onEnd - Callback quando il completamento è finito.
+ * @param {function} onError - Callback in caso di errore.
+ */
+export async function streamExpertResponse(role, prompt, onData, onEnd, onError) {
+  try {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: `Sei un ${role}. Rispondi in modo chiaro, professionale e con tono umano.` },
+        { role: "user", content: prompt }
+      ],
+      stream: true,
+      temperature: 0.7,
+    });
+
+    for await (const part of stream) {
+      const content = part.choices?.[0]?.delta?.content;
+      if (content) {
+        onData(content);
+      }
+    }
+
+    onEnd();
+  } catch (error) {
+    console.error("Errore durante lo streaming OpenAI:", error);
+    onError(error);
+  }
+}
+// server/utils/dataManager.js
+import fs from 'fs';
+import path from 'path';
+
+class DataManager {
+  constructor(dataDir = "data") {
+    this.baseDir = path.resolve(dataDir);
+    this.chatHistory = [];
+    this.questionnaire = [];
+    this.notebooks = {};
+    this.metadata = {
+      created_at: new Date().toISOString(),
+      last_response_time: null,
+    };
+  }
+
+  _saveData() {
+    // Se vuoi implementare il salvataggio su file, aggiungi qui la logica
+  }
+
+  _loadData() {
+    // Se vuoi implementare il caricamento da file, aggiungi qui la logica
+  }
+
+  clearData() {
+    this.chatHistory = [];
+    this.questionnaire = [];
+    this.notebooks = {};
+    this.metadata.last_response_time = null;
+    this._saveData();
+  }
+
+  addChatMessage(message) {
+    this.chatHistory.push(message);
+    this._saveData();
+  }
+
+  getChatHistory() {
+    return this.chatHistory;
+  }
+
+  setQuestionnaire(q) {
+    this.questionnaire = q;
+    this._saveData();
+  }
+
+  getQuestionnaire() {
+    return this.questionnaire;
+  }
+
+  getNotebook(role) {
+    return this.notebooks[role] || [];
+  }
+}
+
+export default new DataManager();
+// server/utils/userManager.js
+import fs from 'fs';
+import path from 'path';
+
+class UserManager {
+  constructor() {
+    // Definisce la cartella degli utenti come "users" nella root del progetto
+    this.userDir = path.join(process.cwd(), 'users');
+    if (!fs.existsSync(this.userDir)) {
+      fs.mkdirSync(this.userDir, { recursive: true });
+    }
+  }
+
+  getUserFilePath(userId) {
+    return path.join(this.userDir, userId, 'profile.json');
+  }
+
+  login(userId) {
+    const userPath = path.join(this.userDir, userId);
+    if (!fs.existsSync(userPath)) {
+      fs.mkdirSync(userPath, { recursive: true });
+    }
+    const profilePath = this.getUserFilePath(userId);
+    if (!fs.existsSync(profilePath)) {
+      const defaultProfile = { userId, name: "", age: "", gender: "Non specificato", bio: "" };
+      fs.writeFileSync(profilePath, JSON.stringify(defaultProfile, null, 2), 'utf8');
+    }
+    return true;
+  }
+
+  getProfile(userId) {
+    const profilePath = this.getUserFilePath(userId);
+    if (fs.existsSync(profilePath)) {
+      return JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    }
+    return {};
+  }
+
+  updateProfile(userId, profile) {
+    const profilePath = this.getUserFilePath(userId);
+    fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2), 'utf8');
+    return true;
+  }
+}
+
+export default new UserManager();
+{
+    "name": "ai-questionnaire-server",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "server.js",
+    "scripts": {
+      "start": "node server.js"
+    },
+    "dependencies": {
+      "body-parser": "^1.20.2",
+      "cors": "^2.8.5",
+      "express": "^4.18.2",
+      "socket.io": "^4.6.1",
+      "openai": "^3.2.1"  
+    }
+  }
+  
+import express from 'express';
+import http from 'http';
+import { Server as SocketIO } from 'socket.io';
+import cors from 'cors';
+import bodyParser from 'body-parser';
+
+import authRoutes from './routes/auth.js';
+import questionnaireRoutes from './routes/questionnaire.js';
+import settingsRoutes from './routes/settings.js';
+import expertRoutes from './routes/expert.js';
+import { streamExpertResponse } from './utils/openaiHelper.js';
+import { defaultRoles } from './config/roles.js';
+import dataManager from './utils/dataManager.js';
+
+const app = express();
+const server = http.createServer(app);
+const io = new SocketIO(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] }
+});
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+
+// API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/questionnaire', questionnaireRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/expert', expertRoutes);
+
+// Socket.IO per lo streaming della risposta di OpenAI
+io.on('connection', (socket) => {
+  console.log('Client connesso:', socket.id);
+  
+  // Listener per unirsi a una room specifica
+  socket.on("joinRoom", ({ room }) => {
+    socket.join(room);
+    console.log(`Socket ${socket.id} joined room ${room}`);
+  });
+  
+  // Ascolta l'evento "promptToExpert" inviato dal client
+  socket.on('promptToExpert', async ({ userId, role, prompt, room }) => {
+    console.log(`Richiesta streaming per utente ${userId} per ruolo ${role} con prompt: ${prompt}`);
+    const targetRoom = room || `stream-${userId}-${role}`;
+    socket.join(targetRoom);
+    
+    await streamExpertResponse(
+      role,
+      prompt,
+      (chunk) => {
+        io.to(targetRoom).emit('expertChunk', { role, chunk });
+      },
+      () => {
+        io.to(targetRoom).emit('expertDone', { role });
+      },
+      (error) => {
+        io.to(targetRoom).emit('expertError', { role, error: error.message });
+      }
+    );
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnesso:', socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`Server in ascolto sulla porta ${PORT}`);
+});
+// server/routes/settings.js
+import express from 'express';
+import settingsManager from '../utils/settingsManager.js';
+
+const router = express.Router();
+
+router.get('/', (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: "UserId richiesto" });
+  const settings = settingsManager.getSettings(userId);
+  res.json(settings);
+});
+
+router.post('/', (req, res) => {
+  const { userId, settings } = req.body;
+  if (!userId || !settings) return res.status(400).json({ error: "UserId e settings richiesti" });
+  settingsManager.updateSettings(userId, settings);
+  res.json({ success: true });
+});
+
+export default router;
+// server/routes/questionnaire.js
+import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import dataManager from '../utils/dataManager.js';
+
+const router = express.Router();
+
+function getSessionsFilePath(userId) {
+  const userPath = path.join(process.cwd(), 'users', userId);
+  if (!fs.existsSync(userPath)) {
+    fs.mkdirSync(userPath, { recursive: true });
+  }
+  return path.join(userPath, 'questionnaire_sessions.json');
+}
+
+// GET: restituisce il questionario corrente
+router.get('/', (req, res) => {
+  const questionnaire = dataManager.getQuestionnaire();
+  res.json({ questionnaire });
+});
+
+// POST: riceve le risposte al questionario e salva la sessione (includendo le domande)
+router.post('/answers', (req, res) => {
+  const { userId, answers, questionnaire } = req.body;
+  if (!userId || !answers || !questionnaire) {
+    return res.status(400).json({ error: "userId, answers e questionnaire sono richiesti" });
+  }
+  
+  let sessionsFile = getSessionsFilePath(userId);
+  let sessions = [];
+  if (fs.existsSync(sessionsFile)) {
+    try {
+      sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+    } catch (err) {
+      sessions = [];
+    }
+  }
+  const sessionNumber = sessions.length + 1;
+  const sessionTitle = `Sessione ${sessionNumber} - Gli imprevisti`;
+  const newSession = {
+    sessionTitle,
+    answers,         // { "0": val, "1": val, ... }
+    questionnaire,   // array con le domande, es. [{ text: "..." }, ...]
+    timestamp: new Date().toISOString()
+  };
+  sessions.push(newSession);
+  fs.writeFileSync(sessionsFile, JSON.stringify(sessions, null, 2), 'utf8');
+
+  console.log(`Sessione salvata per ${userId}:`, newSession);
+  res.json({ success: true });
+});
+
+// GET: recupera tutte le sessioni per un utente
+router.get('/sessions', (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: "UserId richiesto" });
+  const sessionsFile = getSessionsFilePath(userId);
+  let sessions = [];
+  if (fs.existsSync(sessionsFile)) {
+    try {
+      sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+    } catch (err) {
+      sessions = [];
+    }
+  }
+  res.json({ sessions });
+});
+
+export default router;
+// server/routes/expert.js
+import express from 'express';
+import settingsManager from '../utils/settingsManager.js';
+
+const router = express.Router();
+
+// GET /api/expert?userId=...&expertName=...
+router.get('/', (req, res) => {
+  const { userId, expertName } = req.query;
+  if (!userId || !expertName) {
+    return res.status(400).json({ error: "UserId e expertName sono richiesti" });
+  }
+  const settings = settingsManager.getSettings(userId);
+  // Cerca l'esperto nell'array settings.experts
+  const expert = settings.experts.find(exp => exp.name === expertName);
+  const description = expert ? expert.description : "Nessuna descrizione disponibile.";
+  // Attualmente i notebooks sono vuoti; implementa la logica di salvataggio/lettura se necessario
+  const notebooks = [];
+  res.json({ description, notebooks });
+});
+
+export default router;
+// server/routes/auth.js
+import express from 'express';
+import userManager from '../utils/userManager.js';
+
+const router = express.Router();
+
+router.post('/login', (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: "UserId richiesto" });
+  userManager.login(userId);
+  res.json({ success: true, userId });
+});
+
+router.get('/profile', (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: "UserId richiesto" });
+  const profile = userManager.getProfile(userId);
+  res.json(profile);
+});
+
+router.post('/profile', (req, res) => {
+  const { userId, profile } = req.body;
+  if (!userId || !profile) return res.status(400).json({ error: "UserId e profile richiesti" });
+  userManager.updateProfile(userId, profile);
+  res.json({ success: true });
+});
+
+export default router;
+[
+  {
+    "sessionTitle": "Sessione 1 - Gli imprevisti",
+    "answers": {
+      "0": 0,
+      "1": 1,
+      "2": 2,
+      "3": 3,
+      "4": 4
+    },
+    "questionnaire": [
+      {
+        "text": "Quanto ti senti motivato oggi?"
+      },
+      {
+        "text": "Quanto ritieni efficace il tuo approccio allo studio?"
+      },
+      {
+        "text": "Quanto ti senti in controllo del tuo tempo?"
+      },
+      {
+        "text": "Quanto è chiaro il materiale didattico?"
+      },
+      {
+        "text": "Quanto è stimolante il tuo ambiente di studio?"
+      }
+    ],
+    "timestamp": "2025-04-07T21:40:06.328Z"
+  }
+]{
+  "globalPrompt": "CONTESTO GENERALE:\nStiamo sviluppando un sistema intelligente per la creazione di questionari personalizzati, con l'obiettivo di ridurre il tempo tra l'invio e la compilazione.",
+  "experts": [
+    {
+      "name": "Psichiatra",
+      "description": "Esperto in analisi del funzionamento mentale ed emotivo."
+    },
+    {
+      "name": "Psicologo",
+      "description": "Esperto in comportamento umano e processi cognitivi."
+    },
+    {
+      "name": "Educatore",
+      "description": "Esperto in strategie di apprendimento e pedagogia."
+    },
+    {
+      "name": "Coach",
+      "description": "Esperto in miglioramento delle performance e sviluppo personale."
+    },
+    {
+      "name": "Biografo",
+      "description": "Esperto nell'analisi delle esperienze di vita."
+    },
+    {
+      "name": "Moderatore",
+      "description": "Coordina la discussione e formula il questionario finale."
+    }
+  ]
+}{
+  "userId": "alebara",
+  "name": "",
+  "age": "",
+  "gender": "Non specificato",
+  "bio": ""
+}node_modules/
+users/
+{
+  "userId": "alebara",
+  "name": "weafss",
+  "age": "23",
+  "gender": "Maschio",
+  "bio": "Studente di fisica unipd."
+}import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './App.css';
+import { BrowserRouter } from 'react-router-dom';
+import process from 'process';
+window.process = process;
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <BrowserRouter>
+    <App />
+  </BrowserRouter>
+);
+import axios from 'axios';
+
+const API_BASE = 'http://localhost:5000/api';
+
+export const login = async (userId) => {
+  const res = await axios.post(`${API_BASE}/auth/login`, { userId });
+  return res.data;
+};
+
+export const getProfile = async (userId) => {
+  const res = await axios.get(`${API_BASE}/auth/profile`, { params: { userId } });
+  return res.data;
+};
+
+export const updateProfile = async (userId, profile) => {
+  const res = await axios.post(`${API_BASE}/auth/profile`, { userId, profile });
+  return res.data;
+};
+
+export const getQuestionnaire = async () => {
+  const res = await axios.get(`${API_BASE}/questionnaire`);
+  return res.data;
+};
+
+export const sendQuestionnaireAnswers = async (payload) => {
+  const res = await axios.post(`${API_BASE}/questionnaire/answers`, payload);
+  return res.data;
+};
+
+export const getUserSettings = async (userId) => {
+  const res = await axios.get(`${API_BASE}/settings`, { params: { userId } });
+  return res.data;
+};
+
+export const updateUserSettings = async (userId, settings) => {
+  const res = await axios.post(`${API_BASE}/settings`, { userId, settings });
+  return res.data;
+};
+
+export const getExpertData = async (userId, expertName) => {
+  const res = await axios.get(`${API_BASE}/expert`, { params: { userId, expertName } });
+  return res.data;
+};
+
+// Aggiungi qui la funzione getSessions
+export const getSessions = async (userId) => {
+  const res = await axios.get(`${API_BASE}/questionnaire/sessions`, { params: { userId } });
+  return res.data;
+};
+import { io } from "socket.io-client";
+const socket = io("http://localhost:5000");
+export default socket;
+import React, { useState } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import Login from './components/Login';
+import Dashboard from './components/Dashboard';
+import Settings from './components/Settings';
+import ExpertProfile from './components/ExpertProfile';
+import ExpertStream from './components/ExpertStream';
+import SessionReview from './components/SessionReview';
+import ExpertChat from './components/ExpertChat';
+
+function App() {
+  const [user, setUser] = useState(null);
+
+  return (
+    <Routes>
+      <Route path="/login" element={<Login onLogin={(user) => setUser(user)} />} />
+      <Route path="/dashboard/*" element={user ? <Dashboard user={user} /> : <Navigate to="/login" />} />
+      <Route path="/settings" element={user ? <Settings user={user} /> : <Navigate to="/login" />} />
+      <Route path="/expert/:name" element={user ? <ExpertProfile user={user} /> : <Navigate to="/login" />} />
+      <Route path="/stream/:expertRole" element={user ? <ExpertStream user={user} /> : <Navigate to="/login" />} />
+      <Route path="/sessions" element={user ? <SessionReview user={user} /> : <Navigate to="/login" />} />
+      <Route path="/chat" element={user ? <ExpertChat user={user} /> : <Navigate to="/login" />} />
+      <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
+    </Routes>
+  );
+}
+
+export default App;
+// client/src/components/ExpertChat.js
+import React, { useState, useEffect } from 'react';
+import socket from '../services/socket';
+import Header from './Header';
+import Sidebar from './Sidebar';
+import { useNavigate } from 'react-router-dom';
+
+const ExpertChat = ({ user }) => {
+  const [messages, setMessages] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Assicurati che il client si unisca alla room globale per la chat degli esperti
+    socket.emit("joinStream", `chat-${user.userId}`);
+    socket.on("chatMessage", (data) => {
+      setMessages(prev => [...prev, data]);
+    });
+    return () => {
+      socket.off("chatMessage");
+    };
+  }, [user]);
+
+  const filteredMessages = messages.filter(msg =>
+    msg.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (msg.sessionNumber && msg.sessionNumber.toString().includes(searchTerm))
+  );
+
+  return (
+    <>
+      <Header user={user} onLogout={() => navigate('/login')} />
+      <div className="dashboard-container">
+        <Sidebar user={user} />
+        <div className="content">
+          <button onClick={() => navigate('/dashboard')} className="back-button">
+            ← Torna alla Dashboard
+          </button>
+          <h2>Chat degli Esperti</h2>
+          <input
+            type="text"
+            placeholder="Cerca per parole chiave o numero sessione..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="input-field"
+          />
+          <div className="chat-container" style={{overflowY: 'scroll', flexDirection: 'column-reverse'}}>
+            {filteredMessages.map((msg, index) => (
+              <div key={index} className="chat-message" style={{
+                background: getSessionColor(msg.sessionNumber),
+                padding: '10px',
+                borderRadius: '5px',
+                marginBottom: '10px'
+              }}>
+                <strong>{msg.role}:</strong> {msg.text}
+                <div style={{ fontSize: '0.8rem', color: '#666' }}>
+                  {new Date(msg.timestamp).toLocaleTimeString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+function getSessionColor(sessionNumber) {
+  // Genera uno sfondo differente per sessione; per esempio:
+  const colors = ['#fafafa', '#f0f8ff', '#f5f5dc', '#e6e6fa', '#fffacd'];
+  if (!sessionNumber) return '#fafafa';
+  return colors[(sessionNumber - 1) % colors.length];
+}
+
+export default ExpertChat;
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import Header from './Header';
+import Sidebar from './Sidebar';
+import { getExpertData } from '../services/api';
+
+const ExpertProfile = ({ user }) => {
+  const { name } = useParams();
+  const navigate = useNavigate();
+  const [expertData, setExpertData] = useState({ description: '', notebooks: [] });
+
+  useEffect(() => {
+    const fetchExpertData = async () => {
+      try {
+        const res = await getExpertData(user.userId, name);
+        setExpertData(res);
+      } catch (err) {
+        console.error("Errore nel recupero dei dati dell'esperto:", err);
+      }
+    };
+    fetchExpertData();
+  }, [user, name]);
+
+  return (
+    <>
+      <Header user={user} onLogout={() => navigate('/login')} />
+      <div className="dashboard-container">
+        <Sidebar />
+        <div className="content">
+          <button onClick={() => navigate('/dashboard')} className="back-button">
+            ← Torna al Questionario
+          </button>
+          <h2>{name}</h2>
+          {expertData.description ? (
+            <p>{expertData.description}</p>
+          ) : (
+            <p>Nessuna descrizione disponibile.</p>
+          )}
+          <h3>Taccuino</h3>
+          {expertData.notebooks && expertData.notebooks.length > 0 ? (
+            expertData.notebooks.map((session, idx) => (
+              <div key={idx} className="notebook-session">
+                <h4>{session.title}</h4>
+                <ul>
+                  {session.entries.map((entry, i) => (
+                    <li key={i}>{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          ) : (
+            <p>Nessun appunto disponibile.</p>
+          )}
+          {/* Pulsante per avviare lo streaming */}
+          <button
+            onClick={() => navigate(`/stream/${name}`)}
+            className="primary-button"
+            style={{ marginTop: '20px' }}
+          >
+            Avvia Streaming con {name}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default ExpertProfile;
+// client/src/components/Questionnaire.js
+import React, { useState, useEffect } from 'react';
+import { getQuestionnaire, sendQuestionnaireAnswers } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+
+const Questionnaire = ({ user }) => {
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [message, setMessage] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      try {
+        const res = await getQuestionnaire();
+        if (res.questionnaire && res.questionnaire.length > 0) {
+          setQuestions(res.questionnaire);
+        } else {
+          // Domande di fallback (potresti anche definire domande reali qui)
+          const defaultQuestions = [
+            { text: "Quanto ti senti motivato oggi?" },
+            { text: "Quanto ritieni efficace il tuo approccio allo studio?" },
+            { text: "Quanto ti senti in controllo del tuo tempo?" },
+            { text: "Quanto è chiaro il materiale didattico?" },
+            { text: "Quanto è stimolante il tuo ambiente di studio?" }
+          ];
+          setQuestions(defaultQuestions);
+        }
+      } catch (err) {
+        console.error("Errore nel caricamento del questionario:", err);
+      }
+    };
+    fetchQuestions();
+  }, []);
+
+  const handleAnswer = (index, value) => {
+    if (submitted) return;
+    setAnswers(prev => ({ ...prev, [index]: value }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (questions.length === 0 || Object.keys(answers).length !== questions.length) {
+      setMessage("Seleziona una risposta per tutte le domande.");
+      return;
+    }
+    try {
+      const payload = {
+        userId: user.userId,
+        answers,
+        questionnaire: questions
+      };
+      const res = await sendQuestionnaireAnswers(payload);
+      if (res.success) {
+        setMessage("Questionario inviato con successo!");
+        setSubmitted(true);
+        // Redirigi alla pagina di sessioni, oppure a una pagina di conferma
+        setTimeout(() => {
+          navigate('/sessions');
+        }, 2000);
+      } else {
+        setMessage("Errore nell'invio del questionario.");
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage("Errore nell'invio del questionario.");
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="questionnaire-container">
+        <h2>Questionario</h2>
+        <div className="info-message">{message}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="questionnaire-container">
+      <h2>Questionario</h2>
+      <form onSubmit={handleSubmit}>
+        {questions.map((q, index) => (
+          <div key={index} className="question-item">
+            <label>{q.text}</label>
+            <div className="button-group">
+              {[0, 1, 2, 3, 4, 5].map(val => (
+                <button
+                  key={val}
+                  type="button"
+                  className={`circle-button ${answers[index] === val ? 'selected' : ''}`}
+                  onClick={() => handleAnswer(index, val)}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        <button type="submit" className="primary-button">Invia Questionario</button>
+      </form>
+      {message && <div className="info-message">{message}</div>}
+    </div>
+  );
+};
+
+export default Questionnaire;
+import React, { useState } from 'react';
+import { login } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+
+const Login = ({ onLogin }) => {
+  const [userId, setUserId] = useState('');
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!userId.trim()) {
+      setError("Inserisci un codice identificativo!");
+      return;
+    }
+    try {
+      const res = await login(userId);
+      if (res.success) {
+        onLogin({ userId });
+        navigate('/dashboard');
+      } else {
+        setError("Login fallito");
+      }
+    } catch (err) {
+      setError("Errore durante il login");
+    }
+  };
+
+  return (
+    <div className="login-container">
+      <h2>Accedi</h2>
+      <form onSubmit={handleSubmit}>
+        <input 
+          type="text" 
+          placeholder="Codice identificativo" 
+          value={userId} 
+          onChange={(e) => setUserId(e.target.value)} 
+          className="input-field"
+        />
+        <button type="submit" className="primary-button">Accedi</button>
+      </form>
+      {error && <div className="error-message">{error}</div>}
+    </div>
+  );
+};
+
+export default Login;
+// client/src/components/Settings.js
+import React, { useState, useEffect } from 'react';
+import { getUserSettings, updateUserSettings } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import Header from './Header';
+import Sidebar from './Sidebar';
+
+const Settings = ({ user }) => {
+  // Imposta uno stato iniziale con globalPrompt vuoto e experts come array vuoto
+  const [settings, setSettings] = useState({ globalPrompt: '', experts: [] });
+  const [message, setMessage] = useState('');
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const res = await getUserSettings(user.userId);
+        // Se res.experts non esiste, usiamo un array vuoto
+        setSettings({ 
+          globalPrompt: res.globalPrompt || '', 
+          experts: res.experts || [] 
+        });
+      } catch (err) {
+        console.error("Errore nel recupero delle impostazioni:", err);
+      }
+    };
+    fetchSettings();
+  }, [user]);
+
+  const handleGlobalPromptChange = (e) => {
+    setSettings(prev => ({ ...prev, globalPrompt: e.target.value }));
+  };
+
+  const handleExpertChange = (index, field, value) => {
+    const updatedExperts = (settings.experts || []).map((exp, idx) =>
+      idx === index ? { ...exp, [field]: value } : exp
+    );
+    setSettings(prev => ({ ...prev, experts: updatedExperts }));
+  };
+
+  const handleAddExpert = () => {
+    setSettings(prev => ({
+      ...prev,
+      experts: [...(prev.experts || []), { name: '', description: '' }]
+    }));
+  };
+
+  const handleDeleteExpert = (index) => {
+    const updatedExperts = (settings.experts || []).filter((_, idx) => idx !== index);
+    setSettings(prev => ({ ...prev, experts: updatedExperts }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await updateUserSettings(user.userId, settings);
+      if (res.success) {
+        setMessage("Impostazioni aggiornate con successo");
+      } else {
+        setMessage("Errore nell'aggiornamento delle impostazioni");
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage("Errore nell'aggiornamento delle impostazioni");
+    }
+  };
+
+  return (
+    <>
+      <Header user={user} onLogout={() => navigate('/login')} />
+      <div className="dashboard-container">
+        <Sidebar />
+        <div className="content settings-container">
+          <button onClick={() => navigate('/dashboard')} className="back-button">
+            ← Torna alla Dashboard
+          </button>
+          <h2>Impostazioni di Sistema</h2>
+          <form onSubmit={handleSubmit}>
+            <div>
+              <label>Prompt Globale:</label>
+              <textarea
+                value={settings.globalPrompt}
+                onChange={handleGlobalPromptChange}
+                className="input-field"
+              />
+            </div>
+            <h3>Gestione Esperti</h3>
+            {(settings.experts || []).map((expert, index) => (
+              <div key={index} className="expert-item">
+                <input
+                  type="text"
+                  placeholder="Nome esperto"
+                  value={expert.name}
+                  onChange={(e) => handleExpertChange(index, 'name', e.target.value)}
+                  className="input-field"
+                />
+                <input
+                  type="text"
+                  placeholder="Descrizione esperto"
+                  value={expert.description}
+                  onChange={(e) => handleExpertChange(index, 'description', e.target.value)}
+                  className="input-field"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleDeleteExpert(index)}
+                  className="secondary-button"
+                >
+                  Elimina
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={handleAddExpert} className="secondary-button">
+              Aggiungi Esperto
+            </button>
+            <button type="submit" className="primary-button">
+              Salva Impostazioni
+            </button>
+          </form>
+          {message && <div className="info-message">{message}</div>}
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default Settings;
+// client/src/components/SessionReview.js
+import React, { useState, useEffect } from 'react';
+import { getSessions } from '../services/api';
+import Header from './Header';
+import Sidebar from './Sidebar';
+import { useNavigate } from 'react-router-dom';
+
+const SessionReview = ({ user }) => {
+  const [sessions, setSessions] = useState([]);
+  const [selectedSession, setSelectedSession] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchSessions = async () => {
+      try {
+        const res = await getSessions(user.userId);
+        if (res.sessions) setSessions(res.sessions);
+      } catch (err) {
+        console.error("Errore nel recupero delle sessioni:", err);
+      }
+    };
+    fetchSessions();
+  }, [user]);
+
+  const handleSessionSelect = (e) => {
+    const index = e.target.value;
+    if (index === "") {
+      setSelectedSession(null);
+    } else {
+      setSelectedSession(sessions[index]);
+    }
+  };
+
+  // Filtro per parole chiave o numero di sessione
+  const filteredSessions = sessions.filter(session => {
+    return (
+      session.sessionTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      session.timestamp.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  });
+
+  return (
+    <>
+      <Header user={user} onLogout={() => navigate('/login')} />
+      <div className="dashboard-container">
+        <Sidebar />
+        <div className="content">
+          <button onClick={() => navigate('/dashboard')} className="back-button">
+            ← Torna alla Dashboard
+          </button>
+          <h2>Riepilogo Sessioni Questionario</h2>
+          <div style={{ marginBottom: "15px" }}>
+            <input
+              type="text"
+              placeholder="Cerca per sessione o parola chiave..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="input-field"
+            />
+          </div>
+          <div>
+            <label>Seleziona una sessione: </label>
+            <select onChange={handleSessionSelect} defaultValue="">
+              <option value="">-- Seleziona --</option>
+              {filteredSessions.map((session, index) => (
+                <option key={index} value={index}>
+                  {session.sessionTitle} ({new Date(session.timestamp).toLocaleString()})
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedSession && (
+            <div className="session-details" style={{
+              background: `linear-gradient(135deg, #fefefe, ${indexToColor(selectedSession)})`,
+              padding: "15px",
+              borderRadius: "8px",
+              marginTop: "20px"
+            }}>
+              <h3>{selectedSession.sessionTitle}</h3>
+              <p><strong>Data:</strong> {new Date(selectedSession.timestamp).toLocaleString()}</p>
+              <h4>Domande e Risposte</h4>
+              {selectedSession.questionnaire && selectedSession.questionnaire.length > 0 ? (
+                selectedSession.questionnaire.map((q, idx) => (
+                  <div key={idx} className="question-item">
+                    <p><strong>Domanda:</strong> {q.text}</p>
+                    <p><strong>Risposta:</strong> {selectedSession.answers[idx]}</p>
+                  </div>
+                ))
+              ) : (
+                <p>Nessun questionario registrato per questa sessione.</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+};
+
+// Funzione helper per generare una sfumatura in base all'indice della sessione
+function indexToColor(session) {
+  // Puoi personalizzare questa funzione in base a come vuoi differenziare le sessioni
+  // Per esempio, usa un array di colori predefiniti:
+  const colors = ['#fafafa', '#f0f8ff', '#f5f5dc', '#e6e6fa', '#fffacd'];
+  // Utilizza l'indice modulo il numero di colori
+  // Se non hai l'indice, potresti basarti sulla lunghezza dello storico o sul timestamp.
+  const index = Math.floor(Math.random() * colors.length);
+  return colors[index];
+}
+
+export default SessionReview;
+import React, { useEffect, useState } from 'react';
+import socket from '../services/socket';
+import { useParams } from 'react-router-dom';
+
+const ExpertStream = ({ user }) => {
+  const { expertRole } = useParams();
+  const [streamMessages, setStreamMessages] = useState([]);
+  const [prompt, setPrompt] = useState("");
+  const [streaming, setStreaming] = useState(false);
+
+  // Costruisci la room in base a userId e al ruolo dell'esperto
+  const room = `stream-${user.userId}-${expertRole}`;
+
+  useEffect(() => {
+    // Unisciti alla room specifica
+    socket.emit("joinRoom", { room });
+    console.log(`Unito alla room: ${room}`);
+
+    // Ascolta gli eventi emessi dal server
+    socket.on("expertChunk", (data) => {
+      setStreamMessages(prev => [...prev, data.chunk]);
+    });
+    socket.on("expertError", (data) => {
+      setStreamMessages(prev => [...prev, `Error: ${data.error}`]);
+      setStreaming(false);
+    });
+    socket.on("expertDone", (data) => {
+      setStreamMessages(prev => [...prev, "Streaming completato."]);
+      setStreaming(false);
+    });
+
+    return () => {
+      socket.off("expertChunk");
+      socket.off("expertError");
+      socket.off("expertDone");
+    };
+  }, [room]);
+
+  const handleStartStreaming = () => {
+    setStreamMessages([]);
+    setStreaming(true);
+    // Invia l'evento per iniziare lo streaming, specificando anche userId, ruolo, prompt e room
+    socket.emit("promptToExpert", { userId: user.userId, role: expertRole, prompt, room });
+  };
+
+  return (
+    <div>
+      <h2>Streaming per {expertRole}</h2>
+      <div>
+        <textarea 
+          placeholder="Inserisci il prompt per l'esperto..." 
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          style={{ width: '100%', height: '100px' }}
+        />
+      </div>
+      <button onClick={handleStartStreaming} disabled={streaming || prompt.trim() === ""}>
+        {streaming ? "Streaming in corso..." : "Avvia Streaming"}
+      </button>
+      <div style={{ marginTop: '20px', border: '1px solid #ccc', padding: '10px', minHeight: '150px' }}>
+        {streamMessages.length > 0 ? (
+          streamMessages.map((msg, index) => (
+            <div key={index} style={{ marginBottom: '10px' }}>{msg}</div>
+          ))
+        ) : (
+          <p>Qui verrà visualizzato lo streaming...</p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default ExpertStream;
+import React from 'react';
+
+const Chat = ({ messages }) => {
+  return (
+    <div>
+      <h2>Discussione Live</h2>
+      <div className="chat-container">
+        {messages.map((msg, index) => (
+          <div key={index} className="chat-message">
+            <strong>{msg.role}:</strong> {msg.response.chat.message}
+            <div style={{ fontSize: '0.8rem', color: '#666' }}>
+              {new Date(msg.timestamp).toLocaleTimeString()}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export default Chat;
+// client/src/components/Sidebar.js
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { getUserSettings } from '../services/api';
+
+const Sidebar = ({ user }) => {
+  const [experts, setExperts] = useState([]);
+
+  useEffect(() => {
+    const fetchExperts = async () => {
+      try {
+        const settings = await getUserSettings(user.userId);
+        setExperts(settings.experts || []);
+      } catch (err) {
+        console.error("Errore nel recupero degli esperti:", err);
+      }
+    };
+    if (user) fetchExperts();
+  }, [user]);
+
+  return (
+    <div className="sidebar">
+      <h3>Esperti</h3>
+      <ul className="expert-list">
+        {experts.map((expert, index) => (
+          <li key={index}>
+            <Link to={`/expert/${expert.name}`}>{expert.name}</Link>
+          </li>
+        ))}
+      </ul>
+      <hr />
+      <Link to="/chat" className="secondary-button" style={{display: 'block', marginTop: '15px', textAlign: 'center'}}>Chat Esperti</Link>
+    </div>
+  );
+};
+
+export default Sidebar;
+import React, { useEffect, useState } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
+import Header from './Header';
+import Sidebar from './Sidebar';
+import Questionnaire from './Questionnaire';
+import Chat from './Chat';
+import socket from '../services/socket';
+
+const Dashboard = ({ user }) => {
+  const [messages, setMessages] = useState([]);
+  const [showQuestionnaire, setShowQuestionnaire] = useState(true); // potrai gestire questo in base al server
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    socket.on('newMessage', (data) => {
+      setMessages(prev => [...prev, data]);
+    });
+    return () => {
+      socket.off('newMessage');
+    };
+  }, []);
+  
+  const handleLogout = () => {
+    socket.disconnect();
+    navigate('/login');
+  };
+
+  return (
+    <>
+      <Header user={user} onLogout={handleLogout} />
+      <div className="dashboard-container">
+        <Sidebar />
+        <div className="content">
+          {showQuestionnaire ? (
+            <Questionnaire user={user} />
+          ) : (
+            <Chat messages={messages} />
+          )}
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default Dashboard;
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const Header = ({ user, onLogout }) => {
+  const navigate = useNavigate();
+  return (
+    <div className="header">
+      <h1>Questionario AI</h1>
+      <div className="navbar">
+        <span>{user.userId}</span>
+        <button onClick={() => navigate('/settings')}>Impostazioni</button>
+        <button onClick={onLogout}>Logout</button>
+      </div>
+    </div>
+  );
+};
+
+export default Header;
+/* ============================= */
+/*  Reset & Variabili Globali    */
+/* ============================= */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+  :root {
+    --primary-color: #4a90e2;
+    --secondary-color: #f39c12;
+    --background-color: #f4f7f9;
+    --text-color: #333;
+    --error-color: #e74c3c;
+    --success-color: #2ecc71;
+    --font-family: 'Roboto', sans-serif;
+  }
+  
+  /* Importa Google Fonts */
+  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+  
+  /* ============================= */
+  /*       Stili Globali         */
+  /* ============================= */
+  body {
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.6;
+  }
+  
+  /* Input, textarea, select */
+  .input-field {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0 20px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+  }
+  
+  /* Bottoni generali */
+  .primary-button {
+    width: 100%;
+    padding: 10px;
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+  
+  .primary-button:hover {
+    background: var(--secondary-color);
+  }
+  
+  /* Messaggi */
+  .error-message {
+    color: var(--error-color);
+    margin-top: 10px;
+    text-align: center;
+  }
+  
+  .info-message {
+    color: var(--success-color);
+    margin-top: 10px;
+    text-align: center;
+  }
+  
+  /* Pulsante Indietro */
+  .back-button {
+    background: transparent;
+    border: none;
+    color: var(--primary-color);
+    font-size: 1rem;
+    margin-bottom: 20px;
+    cursor: pointer;
+    transition: color 0.3s;
+  }
+  
+  .back-button:hover {
+    color: var(--secondary-color);
+  }
+  
+  /* ============================= */
+  /*      Layout Dashboard         */
+  /* ============================= */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--primary-color);
+    color: #fff;
+    padding: 15px 20px;
+  }
+  
+  .navbar button {
+    margin-left: 10px;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid #fff;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+  
+  .navbar button:hover {
+    background: rgba(255,255,255,0.2);
+  }
+  
+  .dashboard-container {
+    display: flex;
+    min-height: calc(100vh - 60px);
+  }
+  
+  .sidebar {
+    width: 250px;
+    background: #fff;
+    border-right: 1px solid #ddd;
+    padding: 20px;
+  }
+  
+  .sidebar h3 {
+    margin-bottom: 15px;
+  }
+  
+  .expert-list {
+    list-style: none;
+    padding: 0;
+  }
+  
+  .expert-list li {
+    padding: 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #ddd;
+    transition: background 0.3s;
+  }
+  
+  .expert-list li:hover {
+    background: #f0f0f0;
+  }
+  
+  .content {
+    flex: 1;
+    padding: 20px;
+  }
+  
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 10px;
+    background: #333;
+    color: #ccc;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+  }
+  
+  /* ============================= */
+  /*    Pagine Specifiche: Login, Settings, Questionario */
+  /* ============================= */
+  .login-container,
+  .questionnaire-container,
+  .settings-container {
+    max-width: 500px;
+    margin: 50px auto;
+    padding: 25px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  }
+  
+  /* ============================= */
+  /*  Questionario - Pulsanti Circolari  */
+  /* ============================= */
+  .button-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 5px;
+  }
+  
+  .circle-button {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 2px solid var(--primary-color);
+    background: #fff;
+    color: var(--primary-color);
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.3s, color 0.3s;
+  }
+  
+  .circle-button:hover {
+    background: var(--primary-color);
+    color: #fff;
+  }
+  
+  .circle-button.selected {
+    background: var(--secondary-color);
+    border-color: var(--secondary-color);
+    color: #fff;
+  }
+  
+  /* Domande del Questionario */
+  .question-item {
+    margin-bottom: 15px;
+  }
+  
+  .question-item label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+  }
+  
+  /* ============================= */
+  /*     Expert Profile & Notebooks */
+  /* ============================= */
+  .notebook-session {
+    border: 1px solid #ddd;
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 4px;
+  }
+  
+  .notebook-session h4 {
+    margin-bottom: 5px;
+  }
+  
+  /* ============================= */
+  /*         Chat Live            */
+  /* ============================= */
+  .chat-container {
+    height: 300px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 10px;
+    background: #fff;
+    margin-top: 20px;
+  }
+  
+  .chat-message {
+    margin-bottom: 10px;
+  }
+  {
+  "name": "ai-questionnaire-client",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.4.0",
+    "process": "^0.11.10",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.14.1",
+    "react-scripts": "^3.0.1",
+    "socket.io-client": "^4.6.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Questionario AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

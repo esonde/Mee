@@ -27,9 +27,15 @@ const ExpertProfile = ({ user }) => {
       <div className="dashboard-container">
         <Sidebar />
         <div className="content">
-          <button onClick={() => navigate('/dashboard')} className="back-button">← Torna al Questionario</button>
+          <button onClick={() => navigate('/dashboard')} className="back-button">
+            ← Torna al Questionario
+          </button>
           <h2>{name}</h2>
-          {expertData.description ? <p>{expertData.description}</p> : <p>Nessuna descrizione disponibile.</p>}
+          {expertData.description ? (
+            <p>{expertData.description}</p>
+          ) : (
+            <p>Nessuna descrizione disponibile.</p>
+          )}
           <h3>Taccuino</h3>
           {expertData.notebooks && expertData.notebooks.length > 0 ? (
             expertData.notebooks.map((session, idx) => (
@@ -45,6 +51,14 @@ const ExpertProfile = ({ user }) => {
           ) : (
             <p>Nessun appunto disponibile.</p>
           )}
+          {/* Pulsante per avviare lo streaming */}
+          <button
+            onClick={() => navigate(`/stream/${name}`)}
+            className="primary-button"
+            style={{ marginTop: '20px' }}
+          >
+            Avvia Streaming con {name}
+          </button>
         </div>
       </div>
     </>

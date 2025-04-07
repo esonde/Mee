@@ -4,6 +4,7 @@ import path from 'path';
 
 class UserManager {
   constructor() {
+    // Definisce la cartella degli utenti come "users" nella root del progetto
     this.userDir = path.join(process.cwd(), 'users');
     if (!fs.existsSync(this.userDir)) {
       fs.mkdirSync(this.userDir, { recursive: true });

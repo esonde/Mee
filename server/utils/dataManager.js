@@ -15,11 +15,11 @@ class DataManager {
   }
 
   _saveData() {
-    // Se vuoi salvare i dati su file, implementa qui la logica
+    // Se vuoi implementare il salvataggio su file, aggiungi qui la logica
   }
 
   _loadData() {
-    // Se vuoi caricare i dati da file, implementa qui la logica
+    // Se vuoi implementare il caricamento da file, aggiungi qui la logica
   }
 
   clearData() {

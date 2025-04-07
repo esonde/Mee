@@ -1,60 +1,40 @@
 // server/utils/openaiHelper.js
-import pkg from "openai";
-const { Configuration, OpenAIApi } = pkg;
+import OpenAI from "openai";
 
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-if (!OPENAI_API_KEY) {
-  throw new Error("API key non impostata.");
-}
-
-const configuration = new Configuration({
-  apiKey: OPENAI_API_KEY,
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-const openai = new OpenAIApi(configuration);
-
-// Esempio di funzione per streaming (vedi esempio precedente)
-export async function streamExpertResponse(role, prompt, onData, onError, onEnd) {
+/**
+ * Esegue una richiesta di completamento in streaming.
+ * @param {string} role - Il ruolo dell'esperto (es. "Psicologo").
+ * @param {string} prompt - Il prompt utente da inviare.
+ * @param {function} onData - Callback per ogni frammento di testo ricevuto.
+ * @param {function} onEnd - Callback quando il completamento è finito.
+ * @param {function} onError - Callback in caso di errore.
+ */
+export async function streamExpertResponse(role, prompt, onData, onEnd, onError) {
   try {
-    const response = await openai.createChatCompletion(
-      {
-        model: "gpt-4", // o il modello che preferisci
-        messages: [
-          { role: "system", content: `Sei un ${role}. Rispondi in streaming.` },
-          { role: "user", content: prompt }
-        ],
-        stream: true,
-        temperature: 0.7,
-      },
-      { responseType: 'stream' }
-    );
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: `Sei un ${role}. Rispondi in modo chiaro, professionale e con tono umano.` },
+        { role: "user", content: prompt }
+      ],
+      stream: true,
+      temperature: 0.7,
+    });
 
-    response.data.on('data', (chunk) => {
-      const lines = chunk.toString('utf8').split('\n').filter(line => line.trim() !== '');
-      for (const line of lines) {
-        if (line.includes('[DONE]')) {
-          onEnd();
-          return;
-        }
-        try {
-          const jsonStr = line.replace(/^data: /, '');
-          const parsed = JSON.parse(jsonStr);
-          onData(parsed);
-        } catch (err) {
-          onError(err);
-        }
+    for await (const part of stream) {
+      const content = part.choices?.[0]?.delta?.content;
+      if (content) {
+        onData(content);
       }
-    });
+    }
 
-    response.data.on('end', () => {
-      onEnd();
-    });
-
-    response.data.on('error', (err) => {
-      onError(err);
-    });
-  } catch (err) {
-    onError(err);
+    onEnd();
+  } catch (error) {
+    console.error("Errore durante lo streaming OpenAI:", error);
+    onError(error);
   }
 }
